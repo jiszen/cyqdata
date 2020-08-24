@@ -6,6 +6,7 @@ using System.Data.SqlTypes;
 using System.IO;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
+using System.Web;
 
 namespace CYQ.Data.Tool
 {
@@ -22,13 +23,21 @@ namespace CYQ.Data.Tool
         /// <returns></returns>
         public static object ChangeType(object value, Type t)
         {
-            if (t == null)
+            if (value == null || t == null)
             {
                 return null;
+            }
+            if (t.FullName == "System.Object")
+            {
+                return value;
             }
             if (t.FullName == "System.Type")
             {
                 return (Type)value;
+            }
+            if (t.FullName == "System.IO.Stream" && value is HttpPostedFile)
+            {
+                return ((HttpPostedFile)value).InputStream;
             }
             string strValue = Convert.ToString(value);
             if (t.IsGenericType && t.Name.StartsWith("Nullable"))
@@ -57,6 +66,7 @@ namespace CYQ.Data.Tool
             }
             if (strValue == "")
             {
+                if (t.Name.EndsWith("[]")) { return null; }
                 return Activator.CreateInstance(t);
             }
             else if (t.IsValueType)
@@ -76,7 +86,7 @@ namespace CYQ.Data.Tool
                     }
                     return Convert.ChangeType(value, t);//这里用value，避免丢失毫秒
                 }
-                if (t.Name == "Guid")
+                else if (t.Name == "Guid")
                 {
                     if (strValue == SqlValue.Guid || strValue.StartsWith("newid"))
                     {
@@ -84,37 +94,7 @@ namespace CYQ.Data.Tool
                     }
                     return new Guid(strValue);
                 }
-                else if (t.Name.StartsWith("Int"))
-                {
-                    switch (strValue.ToLower())
-                    {
-                        case "true":
-                            return 1;
-                        case "false":
-                            return 0;
-                    }
-                    if (strValue.IndexOf('.') > -1)
-                    {
-                        strValue = strValue.Split('.')[0];
-                    }
-                    else if (value.GetType().IsEnum)
-                    {
-                        return (int)value;
-                    }
-                }
-                else if (t.Name == "Double" || t.Name == "Single")
-                {
-                    switch (strValue.ToLower())
-                    {
-                        case "infinity":
-                        case "正无穷大":
-                            return double.PositiveInfinity;
-                        case "-infinity":
-                        case "负无穷大":
-                            return double.NegativeInfinity;
-                    }
-                }
-                else if (t.Name == "Boolean")
+                else
                 {
                     switch (strValue.ToLower())
                     {
@@ -123,20 +103,50 @@ namespace CYQ.Data.Tool
                         case "1":
                         case "on":
                         case "是":
-                            return true;
+                            if (t.Name == "Boolean")
+                                return true;
+                            else strValue = "1";
+                            break;
                         case "no":
                         case "false":
                         case "0":
                         case "":
                         case "否":
+                            if (t.Name == "Boolean")
+                                return false;
+                            else strValue = "0";
+                            break;
+                        case "infinity":
+                        case "正无穷大":
+                            if (t.Name == "Double" || t.Name == "Single")
+                                return double.PositiveInfinity;
+                            break;
+                        case "-infinity":
+                        case "负无穷大":
+                            if (t.Name == "Double" || t.Name == "Single")
+                                return double.NegativeInfinity;
+                            break;
                         default:
-                            return false;
+                            if (t.Name == "Boolean")
+                                return false;
+                            break;
                     }
-                }
-                else if (t.IsEnum)
-                {
 
-                    return Enum.Parse(t, strValue, true);
+                    if (t.Name.StartsWith("Int") || t.Name=="Byte")
+                    {
+                        if (strValue.IndexOf('.') > -1)//11.22
+                        {
+                            strValue = strValue.Split('.')[0];
+                        }
+                        else if (value.GetType().IsEnum)
+                        {
+                            return (int)value;
+                        }
+                    }
+                    else if (t.IsEnum)
+                    {
+                        return Enum.Parse(t, strValue, true);
+                    }
                 }
                 return Convert.ChangeType(strValue, t);
             }

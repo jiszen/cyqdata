@@ -112,6 +112,14 @@ namespace CYQ.Data.Table
             }
             set
             {
+                if (!string.IsNullOrEmpty(_TableName) && _TableName != value)
+                {
+                    //外部修改了表名
+                    for (int i = 0; i < this.Count; i++)
+                    {
+                        this[i].TableName = value;
+                    }
+                }
                 _TableName = value;
             }
         }
@@ -122,6 +130,7 @@ namespace CYQ.Data.Table
         {
             MDataColumn mcs = new MDataColumn();
             mcs.DataBaseType = DataBaseType;
+            mcs.DataBaseVersion = DataBaseVersion;
             mcs.CheckDuplicate = false;
             mcs.isViewOwner = isViewOwner;
             mcs.TableName = TableName;
@@ -248,6 +257,7 @@ namespace CYQ.Data.Table
             row.TableName = tableName;
             row.Columns.CheckDuplicate = CheckDuplicate;
             row.Columns.DataBaseType = DataBaseType;
+            row.Columns.DataBaseVersion = DataBaseVersion;
             row.Columns.isViewOwner = isViewOwner;
             row.Columns.relationTables = relationTables;
             row.Conn = Conn;
@@ -346,6 +356,10 @@ namespace CYQ.Data.Table
         /// </summary>
         internal DataBaseType DataBaseType = DataBaseType.None;
         /// <summary>
+        /// 当前的数据库版本号。
+        /// </summary>
+        internal string DataBaseVersion = string.Empty;
+        /// <summary>
         /// 当前的数据库链接项（或语句）
         /// </summary>
         internal string Conn = string.Empty;
@@ -374,37 +388,17 @@ namespace CYQ.Data.Table
                 tableName = _Table.TableName;
             }
             MDataTable dt = new MDataTable(tableName);
-            dt.Columns.Add("ColumnName");
-            dt.Columns.Add("MaxSize");
-            dt.Columns.Add("Scale");
-            dt.Columns.Add("IsCanNull");
-            dt.Columns.Add("IsAutoIncrement");
-            dt.Columns.Add("SqlType");
-            dt.Columns.Add("IsPrimaryKey");
-            dt.Columns.Add("IsUniqueKey");
-            dt.Columns.Add("IsForeignKey");
-            dt.Columns.Add("FKTableName");
-            dt.Columns.Add("DefaultValue");
-            dt.Columns.Add("Description");
-            dt.Columns.Add("TableName");
+            dt.Columns.Add("ColumnName,DataType,SqlType,MaxSize,Scale");
+            dt.Columns.Add("IsPrimaryKey,IsAutoIncrement,IsCanNull,IsUniqueKey,IsForeignKey", SqlDbType.Bit);
+            dt.Columns.Add("TableName,FKTableName,DefaultValue,Description");
 
             for (int i = 0; i < Count; i++)
             {
                 MCellStruct ms = this[i];
                 dt.NewRow(true)
-                    .Set(0, ms.ColumnName)
-                    .Set(1, ms.MaxSize)
-                    .Set(2, ms.Scale)
-                    .Set(3, ms.IsCanNull)
-                    .Set(4, ms.IsAutoIncrement)
-                    .Set(5, ms.SqlType)
-                    .Set(6, ms.IsPrimaryKey)
-                    .Set(7, ms.IsUniqueKey)
-                    .Set(8, ms.IsForeignKey)
-                    .Set(9, ms.FKTableName)
-                    .Set(10, ms.DefaultValue)
-                    .Set(11, ms.Description)
-                .Set(12, ms.TableName);
+                     .Sets(0, ms.ColumnName, ms.ValueType.Name, ms.SqlType, ms.MaxSize, ms.Scale)
+                     .Sets(5, ms.IsPrimaryKey, ms.IsAutoIncrement, ms.IsCanNull, ms.IsUniqueKey, ms.IsForeignKey)
+                     .Sets(10, ms.TableName, ms.FKTableName, ms.DefaultValue, ms.Description);
             }
             return dt;
         }

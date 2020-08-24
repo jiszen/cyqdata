@@ -603,7 +603,21 @@ namespace CYQ.Data.Orm
         {
             if (!IsUseAop || AppConfig.IsAspNetCore)//ASPNETCore下，动态代理的Aop是无效的
             {
-                Action.Data.LoadFrom(entity, BreakOp.Null);
+                MDataRow d = Action.Data;//先触发延时加载的。
+                MDataRow row = MDataRow.CreateFrom(entity);//以实体原有值为基础。
+                foreach (MDataCell cell in d)
+                {
+                    MDataCell valueCell = row[cell.ColumnName];
+                    if (valueCell.IsNull)
+                    {
+                        continue;
+                    }
+                    if (cell.State == 2 && cell.Struct.valueType.IsValueType && (valueCell.StringValue == "0" || valueCell.StringValue == DateTime.MinValue.ToString()))
+                    {
+                        continue;
+                    }
+                    cell.Value = valueCell.Value;
+                }
             }
         }
         /// <summary>

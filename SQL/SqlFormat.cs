@@ -41,7 +41,9 @@ namespace CYQ.Data.SQL
                         case DataBaseType.MySql:
                             return (pre == null ? "" : pre + ".") + "`" + name + "`";
                         case DataBaseType.SQLite:
+                            return "\"" + name + "\"";
                         case DataBaseType.PostgreSQL:
+                            if (AppConfig.DB.IsPostgreLower) { return name; }
                             return "\"" + name + "\"";
                         case DataBaseType.Txt:
                         case DataBaseType.Xml:
@@ -490,6 +492,20 @@ namespace CYQ.Data.SQL
                         {
                             defaultValue = defaultValue.Replace("1", "true").Replace("0", "false");
                         }
+                    }
+                    break;
+                case DataBaseType.DB2:
+                    if (flag == 0)
+                    {
+                        defaultValue = defaultValue.Trim(' ', '\'');
+                        if (groupID == 0)
+                        {
+                            defaultValue = "'" + defaultValue.Trim('\'') + "'";
+                        }
+                    }
+                    else
+                    {
+                        defaultValue = defaultValue.Replace(SqlValue.GetDate, "CURRENT TIMESTAMP");
                     }
                     break;
             }

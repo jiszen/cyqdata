@@ -24,11 +24,25 @@ namespace CYQ.Data.SQL
         {
 
             string key = GetSchemaKey(tableName, conn);
+            #region 缓存检测
             if (_ColumnCache.ContainsKey(key))
             {
                 return _ColumnCache[key].Clone();
             }
-
+            if (!string.IsNullOrEmpty(AppConfig.DB.SchemaMapPath))
+            {
+                string fullPath = AppConfig.RunPath + AppConfig.DB.SchemaMapPath + key + ".ts";
+                if (System.IO.File.Exists(fullPath))
+                {
+                    MDataColumn columns = MDataColumn.CreateFrom(fullPath);
+                    if (columns.Count > 0)
+                    {
+                        CacheManage.LocalInstance.Set(key, columns.Clone(), 1440);
+                        return columns;
+                    }
+                }
+            }
+            #endregion
             string fixName;
             conn = CrossDB.GetConn(tableName, out fixName, conn ?? AppConfig.DB.DefaultConn);
             tableName = fixName;
@@ -52,6 +66,7 @@ namespace CYQ.Data.SQL
                         string fileName = dbHelper.Con.DataSource + tableName + (dalType == DataBaseType.Txt ? ".txt" : ".xml");
                         mdcs = MDataColumn.CreateFrom(fileName);
                         mdcs.DataBaseType = dalType;
+                        mdcs.DataBaseVersion = dbHelper.Version;
                         mdcs.Conn = conn;
                     }
 
@@ -64,12 +79,13 @@ namespace CYQ.Data.SQL
                     mdcs.Conn = conn;
                     mdcs.TableName = tableName;
                     mdcs.DataBaseType = dalType;
+                    mdcs.DataBaseVersion = dbHelper.Version;
 
                     tableName = SqlFormat.Keyword(tableName, dbHelper.DataBaseType);//加上关键字：引号
                     //如果table和helper不在同一个库
                     DalBase helper = dbHelper.ResetDalBase(tableName);
 
-                    helper.IsRecordDebugInfo = false;//内部系统，不记录SQL表结构语句。
+                    helper.IsRecordDebugInfo = false || AppDebug.IsContainSysSql;//内部系统，不记录SQL表结构语句。
                     try
                     {
                         bool isView = tableName.Contains(" ");//是否视图。
@@ -102,6 +118,7 @@ namespace CYQ.Data.SQL
                                 case DataBaseType.MySql:
                                 case DataBaseType.Sybase:
                                 case DataBaseType.PostgreSQL:
+                                case DataBaseType.DB2:
                                     #region Sql
                                     string sql = string.Empty;
                                     if (dalType == DataBaseType.MsSql)
@@ -149,9 +166,14 @@ namespace CYQ.Data.SQL
                                     }
                                     else if (dalType == DataBaseType.PostgreSQL)
                                     {
-                                        sql = GetPostgreColumns();
+                                        sql = GetPostgreColumns(float.Parse(dbHelper.Version));
                                     }
-                                    helper.AddParameters("TableName", SqlFormat.NotKeyword(tableName), DbType.String, 150, ParameterDirection.Input);
+                                    else if (dalType == DataBaseType.DB2)
+                                    {
+                                        tableName = SqlFormat.NotKeyword(tableName).ToUpper();
+                                        sql = GetDB2Columns();
+                                    }
+                                        helper.AddParameters("TableName", SqlFormat.NotKeyword(tableName), DbType.String, 150, ParameterDirection.Input);
                                     DbDataReader sdr = helper.ExeDataReader(sql, false);
                                     if (sdr != null)
                                     {
@@ -332,7 +354,8 @@ namespace CYQ.Data.SQL
                     }
                     catch (Exception err)
                     {
-                        helper.DebugInfo.Append(err.Message);
+                        Log.Write(err, LogType.DataBase);
+                        //helper.DebugInfo.Append(err.Message);
                     }
                     #endregion
                 }
@@ -350,10 +373,23 @@ namespace CYQ.Data.SQL
                     }
                 }
             }
+            #region 缓存设置
+
             if (!_ColumnCache.ContainsKey(key) && mdcs.Count > 0)
             {
                 _ColumnCache.Add(key, mdcs.Clone());
+                if (!string.IsNullOrEmpty(AppConfig.DB.SchemaMapPath))
+                {
+                    string folderPath = AppConfig.RunPath + AppConfig.DB.SchemaMapPath;
+
+                    if (!System.IO.Directory.Exists(folderPath))
+                    {
+                        System.IO.Directory.CreateDirectory(folderPath);
+                    }
+                    mdcs.WriteSchema(folderPath + key + ".ts");
+                }
             }
+            #endregion
             return mdcs;
         }
 
@@ -370,6 +406,7 @@ namespace CYQ.Data.SQL
                 keyDt = sdr.GetSchemaTable();
                 mdc = GetColumnByTable(keyDt, sdr, true);
                 mdc.DataBaseType = helper.DataBaseType;
+                mdc.DataBaseVersion = helper.Version;
             }
 
             return mdc;
@@ -388,14 +425,22 @@ namespace CYQ.Data.SQL
         // private static CacheManage _SchemaCache = CacheManage.Instance;//Cache操作
         internal static bool FillTableSchema(ref MDataRow row, string tableName, string sourceTableName)
         {
-            if (FillSchemaFromCache(ref row, tableName, sourceTableName))
+            MDataColumn mdcs = GetColumns(tableName, row.Conn);
+            if (mdcs == null || mdcs.Count == 0)
             {
-                return true;
+                return false;
             }
-            else//从Cache加载失败
-            {
-                return FillSchemaFromDb(ref row, tableName, sourceTableName);
-            }
+            row = mdcs.ToRow(sourceTableName);
+            return true;
+
+            //if (FillSchemaFromCache(ref row, tableName, sourceTableName))
+            //{
+            //    return true;
+            //}
+            //else//从Cache加载失败
+            //{
+            //    return FillSchemaFromDb(ref row, tableName, sourceTableName);
+            //}
         }
 
         /// <summary>
@@ -410,69 +455,71 @@ namespace CYQ.Data.SQL
             }
             return "ColumnsCache_" + ConnBean.GetHashCode(conn) + "_" + TableInfo.GetHashCode(tableName);
         }
-        private static bool FillSchemaFromCache(ref MDataRow row, string tableName, string sourceTableName)
-        {
-            bool returnResult = false;
+        //    private static bool FillSchemaFromCache(ref MDataRow row, string tableName, string sourceTableName)
+        //    {
+        //        bool returnResult = false;
 
-            string key = GetSchemaKey(tableName, row.Conn);
-            if (CacheManage.LocalInstance.Contains(key))//缓存里获取
-            {
-                try
-                {
-                    row = ((MDataColumn)CacheManage.LocalInstance.Get(key)).ToRow(sourceTableName);
-                    returnResult = row.Count > 0;
-                }
-                catch (Exception err)
-                {
-                    Log.Write(err, LogType.DataBase);
-                }
-            }
-            else if (!string.IsNullOrEmpty(AppConfig.DB.SchemaMapPath))
-            {
-                string fullPath = AppConfig.RunPath + AppConfig.DB.SchemaMapPath + key + ".ts";
-                if (System.IO.File.Exists(fullPath))
-                {
-                    MDataColumn mdcs = MDataColumn.CreateFrom(fullPath);
-                    if (mdcs.Count > 0)
-                    {
-                        row = mdcs.ToRow(sourceTableName);
-                        returnResult = row.Count > 0;
-                        CacheManage.LocalInstance.Set(key, mdcs.Clone(), 1440);
-                    }
-                }
-            }
+        //        string key = GetSchemaKey(tableName, row.Conn);
+        //        if (CacheManage.LocalInstance.Contains(key))//缓存里获取
+        //        {
+        //            try
+        //            {
+        //                row = ((MDataColumn)CacheManage.LocalInstance.Get(key)).ToRow(sourceTableName);
+        //                returnResult = row.Count > 0;
+        //            }
+        //            catch (Exception err)
+        //            {
+        //                Log.Write(err, LogType.DataBase);
+        //            }
+        //        }
+        //        else if (!string.IsNullOrEmpty(AppConfig.DB.SchemaMapPath))
+        //        {
+        //            string fullPath = AppConfig.RunPath + AppConfig.DB.SchemaMapPath + key + ".ts";
+        //            if (System.IO.File.Exists(fullPath))
+        //            {
+        //                MDataColumn mdcs = MDataColumn.CreateFrom(fullPath);
+        //                if (mdcs.Count > 0)
+        //                {
+        //                    row = mdcs.ToRow(sourceTableName);
+        //                    returnResult = row.Count > 0;
+        //                    CacheManage.LocalInstance.Set(key, mdcs.Clone(), 1440);
+        //                }
+        //            }
+        //        }
 
-            return returnResult;
-        }
-        private static bool FillSchemaFromDb(ref MDataRow row, string tableName, string sourceTableName)
-        {
-            try
-            {
-                MDataColumn mdcs = TableSchema.GetColumns(tableName, row.Conn);
-                if (mdcs == null || mdcs.Count == 0)
-                {
-                    return false;
-                }
-                row = mdcs.ToRow(sourceTableName);
-                string key = GetSchemaKey(tableName, mdcs.Conn);
-                CacheManage.LocalInstance.Set(key, mdcs.Clone(), 1440);
-                if (!string.IsNullOrEmpty(AppConfig.DB.SchemaMapPath))
-                {
-                    string folderPath = AppConfig.RunPath + AppConfig.DB.SchemaMapPath;
-                    if (System.IO.Directory.Exists(folderPath))
-                    {
-                        mdcs.WriteSchema(folderPath + key + ".ts");
-                    }
-                }
-                return true;
+        //        return returnResult;
+        //    }
+        //    private static bool FillSchemaFromDb(ref MDataRow row, string tableName, string sourceTableName)
+        //    {
+        //        try
+        //        {
+        //            MDataColumn mdcs = TableSchema.GetColumns(tableName, row.Conn);
+        //            if (mdcs == null || mdcs.Count == 0)
+        //            {
+        //                return false;
+        //            }
+        //            row = mdcs.ToRow(sourceTableName);
+        //            string key = GetSchemaKey(tableName, mdcs.Conn);
+        //            CacheManage.LocalInstance.Set(key, mdcs.Clone(), 1440);
+        //            if (!string.IsNullOrEmpty(AppConfig.DB.SchemaMapPath))
+        //            {
+        //                string folderPath = AppConfig.RunPath + AppConfig.DB.SchemaMapPath;
 
-            }
-            catch (Exception err)
-            {
-                Log.Write(err, LogType.DataBase);
-                return false;
-            }
-        }
+        //                if (!System.IO.Directory.Exists(folderPath))
+        //                {
+        //                    System.IO.Directory.CreateDirectory(folderPath);
+        //                }
+        //                mdcs.WriteSchema(folderPath + key + ".ts");
+        //            }
+        //            return true;
+
+        //        }
+        //        catch (Exception err)
+        //        {
+        //            Log.Write(err, LogType.DataBase);
+        //            return false;
+        //        }
+        //    }
         #endregion
     }
     /// <summary>
@@ -486,8 +533,9 @@ namespace CYQ.Data.SQL
         }
         public static MDataColumn GetColumnByType(Type typeInfo, string conn)
         {
+            if (typeInfo == null) { return null; }
             string key = "ColumnCache_" + typeInfo.FullName;
-            
+
             if (_ColumnCache.ContainsKey(key))
             {
                 return _ColumnCache[key].Clone();
@@ -520,7 +568,8 @@ namespace CYQ.Data.SQL
 
             MDataColumn mdc = new MDataColumn();
             mdc.TableName = typeInfo.Name;
-            switch (ReflectTool.GetSystemType(ref typeInfo))
+            SysType st = ReflectTool.GetSystemType(ref typeInfo);
+            switch (st)
             {
                 case SysType.Base:
                 case SysType.Enum:
@@ -530,9 +579,25 @@ namespace CYQ.Data.SQL
                 case SysType.Collection:
                     Type[] argTypes;
                     Tool.ReflectTool.GetArgumentLength(ref typeInfo, out argTypes);
-                    foreach (Type type in argTypes)
+                    if (argTypes.Length == 2)
                     {
-                        mdc.Add(type.Name, DataType.GetSqlType(type), false);
+                        if (st == SysType.Collection)
+                        {
+                            mdc.Add("Name", DataType.GetSqlType(argTypes[0]), false);
+                            mdc.Add("Value", DataType.GetSqlType(argTypes[1]), false);
+                        }
+                        else
+                        {
+                            mdc.Add("Key", DataType.GetSqlType(argTypes[0]), false);
+                            mdc.Add("Value", DataType.GetSqlType(argTypes[1]), false);
+                        }
+                    }
+                    else
+                    {
+                        foreach (Type type in argTypes)
+                        {
+                            mdc.Add(type.Name, DataType.GetSqlType(type), false);
+                        }
                     }
                     argTypes = null;
                     return mdc;
@@ -764,6 +829,23 @@ namespace CYQ.Data.SQL
                     mStruct.TableName = tableName;
                     mStruct.OldName = mStruct.ColumnName;
                     mStruct.ReaderIndex = i;
+                    if (sqlTypeName == "TINYINT")
+                    {
+                        switch (Convert.ToString(row["DataType"]))
+                        {
+                            case "System.SByte":
+                                mStruct.valueType = typeof(System.SByte);
+                                break;
+
+                            case "System.Byte":
+                                mStruct.valueType = typeof(System.Byte);
+                                break;
+                            case "System.Boolean":
+                                mStruct.valueType = typeof(System.Boolean);
+                                break;
+
+                        }
+                    }
                     mdcs.Add(mStruct);
 
                 }
@@ -807,7 +889,7 @@ namespace CYQ.Data.SQL
                       when (DATA_TYPE='NUMBER' and DATA_SCALE>0 and DATA_PRECISION<22)  then 'double'
                         when (DATA_TYPE='NUMBER' and DATA_SCALE=0 and DATA_PRECISION<11)  then 'int'
                           when (DATA_TYPE='NUMBER' and DATA_SCALE=0 and DATA_PRECISION<20)  then 'long'
-                                when DATA_TYPE='NUMBER' then'decimal'                   
+                                when DATA_TYPE='NUMBER' then 'decimal'                   
                     else DATA_TYPE end as SqlType,
                     case when v.CONSTRAINT_TYPE='P' then 1 else 0 end as IsPrimaryKey,
                       case when v.CONSTRAINT_TYPE='U' then 1 else 0 end as IsUniqueKey,
@@ -863,14 +945,19 @@ left join syscomments s3 on s1.cdefault=s3.id
 where s1.id =object_id(@TableName) and s2.usertype<100
 order by s1.colid";
         }
-        internal static string GetPostgreColumns()
+        internal static string GetPostgreColumns(float version)
         {
-            return @"select
+            string key = "case  when position('nextval' in column_default)>0 then 1 else 0 end";
+            if (version >= 10)
+            {
+                key = "case i.is_identity when 'NO' then 0 else 1 end";
+            }
+            return string.Format(@"select
 a.attname AS ColumnName,
 i.data_type AS SqlType,
 coalesce(character_maximum_length,numeric_precision,-1) as MaxSize,numeric_scale as Scale,
 case a.attnotnull when 'true' then 0 else 1 end AS IsNullable,
-case  when position('nextval' in column_default)>0 then 1 else 0 end as IsAutoIncrement, 
+{0} as IsAutoIncrement, 
 case when o.conkey[a.attnum] is null then 0 else 1 end as IsPrimaryKey,
 d.description AS Description,
 i.column_default as DefaultValue
@@ -882,10 +969,30 @@ left join information_schema.columns i on i.table_schema='public' and i.table_na
 left join pg_constraint o on o.contype='p' and o.conrelid=c.oid
 where c.relname =:TableName
 and a.attnum > 0 and a.atttypid>0
-ORDER BY a.attnum";
+ORDER BY a.attnum", key);
         }
 
+        internal static string GetDB2Columns()
+        {
+            return @"select a.colname as ColumnName ,
+a.length as MaxSize,
+a.typename as SqlType,
+a.Scale,
+case a.Nulls when 'Y' then 1 else 0 end AS IsNullable,
+case a.keyseq when 1 then 1 ELSE 0 END as IsAutoIncrement,
+case c.type when 'P' then 1 else 0 end  as IsPrimaryKey,
+case c.type when 'U' then 1 else 0 end  as IsUniqueKey,
+a.remarks as Description,
+a.default as DefaultValue
+from SYSCAT.COLUMNS a 
+left join syscat.keycoluse b on a.tabname=b.tabname and a.colname=b.colname 
+left join syscat.tabconst c on b.tabname=c.tabname   and b.constname=c.constname  
+where a.tabname=@TableName 
+order by a.colno
 
+";
+        }
         #endregion
     }
+   
 }

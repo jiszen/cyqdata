@@ -23,6 +23,7 @@ namespace CYQ.Data.Table
     /// </summary>
     public partial class MDataTable
     {
+        private const string DefaultTableName = "SysDefault";
         #region 隐式转换
 
         /// <summary>
@@ -54,7 +55,9 @@ namespace CYQ.Data.Table
             {
                 foreach (DataColumn item in dt.Columns)
                 {
-                    mdt.Columns.Add(new MCellStruct(item.ColumnName, DataType.GetSqlType(item.DataType), item.ReadOnly, item.AllowDBNull, item.MaxLength));
+                    MCellStruct mcs = new MCellStruct(item.ColumnName, DataType.GetSqlType(item.DataType), item.ReadOnly, item.AllowDBNull, item.MaxLength);
+                    mcs.valueType = item.DataType;
+                    mdt.Columns.Add(mcs);
                 }
                 foreach (DataRow row in dt.Rows)
                 {
@@ -122,7 +125,7 @@ namespace CYQ.Data.Table
         [NonSerialized]
         private object _DynamicData;
         /// <summary>
-        /// 动态存储数据
+        /// 动态存储数据(如：AcceptChanges 产生的异常默认由本参数存储)
         /// </summary>
         public object DynamicData
         {
@@ -132,7 +135,7 @@ namespace CYQ.Data.Table
 
         public MDataTable()
         {
-            Init("default", null);
+            Init(DefaultTableName, null);
         }
         public MDataTable(string tableName)
         {
@@ -207,6 +210,14 @@ namespace CYQ.Data.Table
             {
                 _Columns = value;
                 _Columns._Table = this;
+                if (_TableName == DefaultTableName)
+                {
+                    _TableName = _Columns.TableName;
+                }
+                else
+                {
+                    _Columns.TableName = _TableName;
+                }
             }
         }
         private string _Conn;
@@ -247,14 +258,29 @@ namespace CYQ.Data.Table
         /// <returns></returns>
         public MDataRow NewRow(bool isAddToTable)
         {
+            return NewRow(isAddToTable, -1);
+        }
+        /// <summary>
+        /// 新建一行
+        /// </summary>
+        /// <param name="index">插入的索引</param>
+        /// <returns></returns>
+        public MDataRow NewRow(bool isAddToTable, int index)
+        {
             MDataRow mdr = new MDataRow(this);
             if (isAddToTable)
             {
-                Rows.Add(mdr, false);
+                if (index < 0)
+                {
+                    Rows.Add(mdr, false);
+                }
+                else
+                {
+                    Rows.Insert(index, mdr);
+                }
             }
             return mdr;
         }
-
         #region 准备新开始的方法
         /// <summary>
         /// 使用本查询，得到克隆后的数据
@@ -615,6 +641,7 @@ namespace CYQ.Data.Table
         /// 批量插入或更新 [提示：操作和当前表名有关，如当前表名不是要提交入库的表名,请给TableName属性重新赋值]
         /// </summary>
         /// <param name="op">操作选项[插入|更新]</param>
+        /// <returns>返回false时，若有异常，存在：DynamicData 参数中</returns>
         public bool AcceptChanges(AcceptOp op)
         {
             return AcceptChanges(op, string.Empty);
@@ -623,6 +650,7 @@ namespace CYQ.Data.Table
         /// <param name="op">操作选项[插入|更新]</param>
         /// <param name="newConn">指定新的数据库链接</param>
         /// <param name="jointPrimaryKeys">AcceptOp为Update或Auto时，若需要设置联合主键为唯一检测或更新条件，则可设置多个字段名</param>
+        /// <returns>返回false时，若有异常，存在：DynamicData 参数中</returns>
         public bool AcceptChanges(AcceptOp op, string newConn, params object[] jointPrimaryKeys)
         {
             bool result = false;
@@ -1282,14 +1310,18 @@ namespace CYQ.Data.Table
         /// <returns></returns>
         public static MDataTable CreateFrom(object entityList, BreakOp op)
         {
-            MDataTable dt = new MDataTable("SysDefault");
+            if (entityList is MDataView)//为了处理UI绑定的表格双击再弹表格
+            {
+                return ((MDataView)entityList).Table;
+            }
+            MDataTable dt = new MDataTable();
             if (entityList != null)
             {
                 try
                 {
                     bool isObj = true;
                     Type t = entityList.GetType();
-
+                    dt.TableName = t.Name;
                     if (t.IsGenericType)
                     {
                         #region 处理列头
@@ -1326,10 +1358,25 @@ namespace CYQ.Data.Table
                         dt.Columns.Add("Key");
                         dt.Columns.Add("Value");
                     }
+                    else if (entityList is DbParameterCollection)
+                    {
+                        dt.Columns = TableSchema.GetColumnByType(typeof(DbParameter));
+                    }
                     else
                     {
-                        isObj = false;
-                        dt.Columns.Add(t.Name.Replace("[]", ""), SqlDbType.Variant, false);
+                        if (entityList is IEnumerable)
+                        {
+                            isObj = false;
+                            dt.Columns.Add(t.Name.Replace("[]", ""), SqlDbType.Variant, false);
+                        }
+                        else
+                        {
+                            MDataRow row = MDataRow.CreateFrom(entityList);
+                            if (row != null)
+                            {
+                                return row.Table;
+                            }
+                        }
                     }
                     foreach (object o in entityList as IEnumerable)
                     {
@@ -1358,37 +1405,28 @@ namespace CYQ.Data.Table
         }
         public static MDataTable CreateFrom(NameObjectCollectionBase noc)
         {
-            MDataTable dt = new MDataTable("SysDefault");
+            MDataTable dt = new MDataTable();
             if (noc != null)
             {
                 if (noc is NameValueCollection)
                 {
-                    dt.Columns.Add("Key");
-                    dt.Columns.Add("Value");
+                    dt.TableName = "NameValueCollection";
+                    dt.Columns.Add("Key,Value");
                     NameValueCollection nv = noc as NameValueCollection;
                     foreach (string key in nv)
                     {
-                        dt.NewRow(true).Set(0, key, 1).Set(1, nv[key], 1);
+                        dt.NewRow(true).Sets(0, key, nv[key]);
                     }
                 }
                 else if (noc is HttpCookieCollection)
                 {
-
+                    dt.TableName = "HttpCookieCollection";
                     HttpCookieCollection nv = noc as HttpCookieCollection;
-                    dt.Columns.Add("Name");
-                    dt.Columns.Add("Value");
-                    dt.Columns.Add("Expires");
-                    dt.Columns.Add("Domain");
-                    dt.Columns.Add("HttpOnly");
-                    dt.Columns.Add("Path");
+                    dt.Columns.Add("Name,Value,HttpOnly,Domain,Expires,Path");
                     for (int i = 0; i < nv.Count; i++)
                     {
                         HttpCookie cookie = nv[i];
-                        dt.NewRow(true).Set(0, cookie.Name).Set(1, cookie.Value)
-                        .Set(2, cookie.Expires)
-                         .Set(3, cookie.Domain)
-                         .Set(4, cookie.HttpOnly)
-                         .Set(5, cookie.Path);
+                        dt.NewRow(true).Sets(0, cookie.Name, cookie.Value, cookie.HttpOnly, cookie.Domain, cookie.Expires, cookie.Path);
                     }
                 }
                 else
@@ -1737,21 +1775,21 @@ namespace CYQ.Data.Table
             //}
             //else
             //{
-                string pkName = primary != null ? primary.ColumnName : Columns.FirstPrimary.ColumnName;
-                int i1 = Columns.GetIndex(pkName);
-                MDataRow rowA, rowB;
+            string pkName = primary != null ? primary.ColumnName : Columns.FirstPrimary.ColumnName;
+            int i1 = Columns.GetIndex(pkName);
+            MDataRow rowA, rowB;
 
-                for (int i = 0; i < Rows.Count; i++)
+            for (int i = 0; i < Rows.Count; i++)
+            {
+                rowA = Rows[i];
+                rowB = dt.FindRow(pkName + "='" + rowA[i1].StringValue + "'");
+                if (rowB != null)
                 {
-                    rowA = Rows[i];
-                    rowB = dt.FindRow(pkName + "='" + rowA[i1].StringValue + "'");
-                    if (rowB != null)
-                    {
-                        rowA.LoadFrom(rowB, RowOp.IgnoreNull, false);
-                        dt.Rows.Remove(rowB);
-                    }
+                    rowA.LoadFrom(rowB, RowOp.Update, false);
+                    dt.Rows.Remove(rowB);
                 }
-           // }
+            }
+            // }
         }
 
         #region 注释掉代码

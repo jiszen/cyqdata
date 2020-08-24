@@ -100,15 +100,27 @@ namespace CYQ.Data.Tool
         /// <summary>
         /// 是否存在（表 U、视图 V 存储过程 P）
         /// </summary>
+        /// <param name="name">名称</param>
         public static bool Exists(string name)
         {
             return Exists(name, null);
         }
+        /// <summary>
+        /// 是否存在（表 U、视图 V 存储过程 P）
+        /// </summary>
+        /// <param name="name">名称</param>
+        /// <param name="type">表 U、视图 V 存储过程 P</param>
         public static bool Exists(string name, string type)
         {
-            return Exists(name, type, null);
+            return Exists(name, type, AppConfig.DB.DefaultConn);
         }
-
+        /// <summary>
+        /// 是否存在（表 U、视图 V 存储过程 P）
+        /// </summary>
+        /// <param name="name">名称</param>
+        /// <param name="type">表 U、视图 V 存储过程 P</param>
+        /// <param name="conn">指定链接</param>
+        /// <returns></returns>
         public static bool Exists(string name, string type, string conn)
         {
             return CrossDB.Exists(name, type, conn);
@@ -166,7 +178,7 @@ namespace CYQ.Data.Tool
                         dataBase = proc.DataBaseName;
                         try
                         {
-                            proc.dalHelper.IsRecordDebugInfo = false;
+                            proc.dalHelper.IsRecordDebugInfo = false || AppDebug.IsContainSysSql;
                             proc.SetAopState(Aop.AopOp.CloseAll);
                             proc.ResetProc(GetCreateTableSql(tableName, columns, proc.DataBaseType, proc.DataBaseVersion));//.Replace("\n", string.Empty)
                             result = proc.ExeNonQuery() > -2;
@@ -224,9 +236,33 @@ namespace CYQ.Data.Tool
         /// <summary>
         /// 获取指定的表架构生成的SQL(Create Table)的说明语句
         /// </summary>
+        public static string GetCreateTableDescriptionSql(string tableName)
+        {
+            return GetCreateTableDescriptionSql(tableName, AppConfig.DB.DefaultConn);
+        }
+        public static string GetCreateTableDescriptionSql(string tableName, string conn)
+        {
+            MDataColumn mdc = GetColumns(tableName, conn);
+            return GetCreateTableDescriptionSql(tableName, mdc, mdc.DataBaseType);
+        }
+        /// <summary>
+        /// 获取指定的表架构生成的SQL(Create Table)的说明语句
+        /// </summary>
         public static string GetCreateTableDescriptionSql(string tableName, MDataColumn columns, DataBaseType dalType)
         {
             return SqlCreateForSchema.CreateTableDescriptionSql(tableName, columns, dalType);
+        }
+        /// <summary>
+        /// 获取指定的表架构生成的SQL(Create Table)的说明语句
+        /// </summary>
+        public static string GetCreateTableSql(string tableName)
+        {
+            return GetCreateTableSql(tableName, AppConfig.DB.DefaultConn);
+        }
+        public static string GetCreateTableSql(string tableName,string conn)
+        {
+            MDataColumn mdc = GetColumns(tableName, conn);
+            return GetCreateTableSql(tableName, mdc, mdc.DataBaseType, mdc.DataBaseVersion);
         }
         /// <summary>
         /// 获取指定的表架构生成的SQL(Create Table)的说明语句

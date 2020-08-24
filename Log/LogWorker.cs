@@ -50,7 +50,19 @@ namespace CYQ.Data
             {
                 logPath = logPath.Substring(2);
             }
-            folder = folder + logPath;
+            if (!AppConfig.IsWeb && logPath.Contains(":"))//winform 自定义绝对路径
+            {
+                string c = logPath.Contains("\\") ? "\\" : "/";
+                if (!logPath.EndsWith(c))
+                {
+                    logPath = logPath + c;
+                }
+                folder = logPath;
+            }
+            else
+            {
+                folder = folder + logPath;
+            }
             if (!System.IO.Directory.Exists(folder))
             {
                 System.IO.Directory.CreateDirectory(folder);
@@ -63,9 +75,13 @@ namespace CYQ.Data
                 {
                     empty = 0;
                     SysLogs sys = _LogQueue.Dequeue();
+                    if(sys==null)
+                    {
+                        continue;
+                    }
                     if (!sys.IsWriteToTxt)
                     {
-                        if (sys.Insert(InsertOp.None)) ;//直接写数据库。
+                        if (sys.Insert(InsertOp.None)) //直接写数据库。
                         {
                             sys.Dispose();
                             continue;

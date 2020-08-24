@@ -28,7 +28,7 @@ namespace CYQ.Data.SQL
             }
             if (rowCount > 0)//分页查询。
             {
-                where = SqlCreate.AddOrderBy(where, primaryKey);
+                where = SqlCreate.AddOrderBy(where, primaryKey, dalType);
             }
             int topN = pageIndex * pageSize;//Top N 最大数
             int max = (pageIndex - 1) * pageSize;
@@ -51,6 +51,8 @@ namespace CYQ.Data.SQL
                     case DataBaseType.MySql:
                     case DataBaseType.PostgreSQL:
                         return string.Format(top1Pager, columns, tableName, where + " limit " + pageSize);
+                    case DataBaseType.DB2:
+                        return string.Format(top1Pager, columns, tableName, where + " fetch first "+ pageSize + " rows only");
                 }
             }
             else
@@ -67,17 +69,15 @@ namespace CYQ.Data.SQL
                         {
                             return string.Format(top2Pager, pageSize + " " + columns, "top " + (leftNum == 0 ? pageSize : leftNum) + " * ", tableName, ReverseOrderBy(where, primaryKey), GetOrderBy(where, false, primaryKey));//反序
                         }
-                        if ((pageCount > 1000 || rowCount > 100000) && pageIndex > pageCount / 2) // 页数过后半段，反转查询
+                        if (dalType != DataBaseType.MsSql && (pageCount > 1000 || rowCount > 100000) && pageIndex > pageCount / 2) // 页数过后半段，反转查询
                         {
+                            //mssql rownumber 的语句
                             orderBy = GetOrderBy(where, false, primaryKey);
-                            if (dalType != DataBaseType.MsSql)//mssql是用rownumber，不用反转，
-                            {
-                                where = ReverseOrderBy(where, primaryKey);//事先反转一次。
-                            }
+                            where = ReverseOrderBy(where, primaryKey);//事先反转一次。
                             topN = rowCount - max;//取后面的
                             int rowStartTemp = rowCount - rowEnd;
-                            rowEnd = rowCount - rowStart +1;//网友反馈修正（数据行要+1）
-                            rowStart = rowStartTemp +1;//网友反馈修正（数据行要+1）
+                            rowEnd = rowCount - rowStart + 1;//网友反馈修正（数据行要+1）
+                            rowStart = rowStartTemp + 1;//网友反馈修正（数据行要+1）
                         }
                         break;
                     case DataBaseType.Txt:
@@ -92,6 +92,7 @@ namespace CYQ.Data.SQL
             {
                 case DataBaseType.MsSql:
                 case DataBaseType.Oracle:
+                case DataBaseType.DB2://
                     if (version.StartsWith("08"))
                     {
                         goto temtable;

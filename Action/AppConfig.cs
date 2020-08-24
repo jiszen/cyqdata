@@ -550,6 +550,20 @@ namespace CYQ.Data
                     SetApp("IsTxtReadOnly", value.ToString());
                 }
             }
+            /// <summary>
+            /// Postgre 是否小写模式(默认false)。
+            /// </summary>
+            public static bool IsPostgreLower
+            {
+                get
+                {
+                    return GetAppBool("IsPostgreLower", false);
+                }
+                set
+                {
+                    SetApp("IsPostgreLower", value.ToString());
+                }
+            }
             static string _DefaultConn = string.Empty;
             /// <summary>
             /// 默认数据库链接（可赋完整链接语句或Web.config配置项名称）
@@ -754,8 +768,8 @@ namespace CYQ.Data
                 }
             }
             /// <summary>
-            /// 删除字段名称（若表存在此设置的字段名称时，MActon的删除操作将变更变为更新操作）
-            /// 默认：IsDeleted
+            /// 软删除字段名称（若表存在此设置的字段名称时，MActon的删除操作将变更变为更新操作）
+            /// 默认：IsDeleted（若不想启用，配置为空。）
             /// </summary>
             public static string DeleteField
             {

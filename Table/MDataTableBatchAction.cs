@@ -212,17 +212,17 @@ namespace CYQ.Data.Table
             }
         }
 
-        internal bool Insert(bool keepid)
+        internal bool Insert(bool keepID)
         {
             try
             {
                 if (dalTypeTo == DataBaseType.MsSql)
                 {
-                    return MsSqlBulkCopyInsert(keepid);
+                    return MsSqlBulkCopyInsert(keepID);
                 }
                 else if (dalTypeTo == DataBaseType.Oracle && _dalHelper == null && !IsTruncate)
                 {
-                    if (OracleDal.clientType == 1 && keepid)
+                    if (OracleDal.clientType == 1 && keepID)
                     {
                         return OracleBulkCopyInsert();//不支持外部事务合并（因为参数只能传链接字符串。）
                     }
@@ -233,14 +233,14 @@ namespace CYQ.Data.Table
                 }
                 else if (dalTypeTo == DataBaseType.MySql && IsAllowBulkCopy(DataBaseType.MySql))
                 {
-                    return LoadDataInsert(dalTypeTo, keepid);
+                    return LoadDataInsert(dalTypeTo, keepID);
                 }
 
                 //if (dalTypeTo == DalType.Txt || dalTypeTo == DalType.Xml)
                 //{
                 //    NoSqlAction.ResetStaticVar();//重置一下缓存
                 //}
-                return NomalInsert(keepid);
+                return NomalInsert(keepID);
 
             }
             catch (Exception err)
@@ -298,7 +298,7 @@ namespace CYQ.Data.Table
                 {
                     action.BeginTransation();
                 }
-                action.dalHelper.IsRecordDebugInfo = false;//屏蔽SQL日志记录 2000数据库大量的In条件会超时。
+                action.dalHelper.IsRecordDebugInfo = false || AppDebug.IsContainSysSql;//屏蔽SQL日志记录 2000数据库大量的In条件会超时。
 
                 if ((jointPrimaryIndex != null && jointPrimaryIndex.Count == 1) || (jointPrimaryIndex == null && mdt.Columns.JointPrimary.Count == 1))
                 //jointPrimaryIndex == null && mdt.Columns.JointPrimary.Count == 1 && mdt.Rows.Count <= 10000
@@ -594,30 +594,33 @@ namespace CYQ.Data.Table
         }
         bool IsAllowBulkCopy(DataBaseType dalType)
         {
-            foreach (MCellStruct st in mdt.Columns)
+            if (!AppConfig.IsAspNetCore)
             {
-                switch (DataType.GetGroup(st.SqlType))
+                foreach (MCellStruct st in mdt.Columns)
                 {
-                    case 999:
+                    switch (DataType.GetGroup(st.SqlType))
+                    {
+                        case 999:
+                            return false;
+                    }
+                }
+                try
+                {
+                    if (dalType == DataBaseType.Oracle && !HasSqlLoader())
+                    {
                         return false;
+                    }
+                    string path = Path.GetTempPath() + "t.t";
+                    if (!File.Exists(path))
+                    {
+                        File.Create(path).Close();//检测文件夹的读写权限
+                    }
+                    return IOHelper.Delete(path);
                 }
-            }
-            try
-            {
-                if (dalType == DataBaseType.Oracle && !HasSqlLoader())
+                catch
                 {
-                    return false;
-                }
-                string path = Path.GetTempPath() + "t.t";
-                if (!File.Exists(path))
-                {
-                    File.Create(path).Close();//检测文件夹的读写权限
-                }
-                return IOHelper.Delete(path);
-            }
-            catch
-            {
 
+                }
             }
             return false;
         }
@@ -637,7 +640,7 @@ namespace CYQ.Data.Table
             if (dalType == DataBaseType.Oracle)
             {
                 string ctlPath = CreateCTL(sql, path);
-                sql = string.Format(SqlCreate.OracleSqlidR, "sa/123456@ORCL", ctlPath);//只能用进程处理
+                sql = string.Format(SqlCreate.OracleSqlldr, "sa/123456@ORCL", ctlPath);//只能用进程处理
             }
             try
             {
@@ -1004,7 +1007,7 @@ namespace CYQ.Data.Table
                 {
                     action.BeginTransation();//事务由外部控制
                 }
-                action.dalHelper.IsRecordDebugInfo = false;//屏蔽SQL日志记录
+                action.dalHelper.IsRecordDebugInfo = false || AppDebug.IsContainSysSql;//屏蔽SQL日志记录
                 if (keepid)
                 {
                     action.SetidentityInsertOn();
@@ -1071,7 +1074,7 @@ namespace CYQ.Data.Table
                 {
                     action.BeginTransation();
                 }
-                action.dalHelper.IsRecordDebugInfo = false;//屏蔽SQL日志记录
+                action.dalHelper.IsRecordDebugInfo = false || AppDebug.IsContainSysSql;//屏蔽SQL日志记录
 
                 MDataRow row;
                 for (int i = 0; i < mdt.Rows.Count; i++)
@@ -1136,7 +1139,7 @@ namespace CYQ.Data.Table
                 {
                     action.BeginTransation();
                 }
-                action.dalHelper.IsRecordDebugInfo = false;//屏蔽SQL日志记录
+                action.dalHelper.IsRecordDebugInfo = false || AppDebug.IsContainSysSql;//屏蔽SQL日志记录
 
                 MDataRow row;
                 for (int i = 0; i < mdt.Rows.Count; i++)

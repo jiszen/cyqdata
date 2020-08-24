@@ -65,7 +65,7 @@ namespace CYQ.Data.SQL
         internal string GetDeleteToUpdateSql(object whereObj)
         {
             string editTime = GetEditTimeSql();
-            return "update " + TableName + " set " + editTime + AppConfig.DB.DeleteField + "=[#TRUE] where " + FormatWhere(whereObj);
+            return "update " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + " set " + editTime + SqlFormat.Keyword(AppConfig.DB.DeleteField, _action.dalHelper.DataBaseType) + "=[#TRUE] where " + FormatWhere(whereObj);
         }
         private string GetEditTimeSql()
         {
@@ -78,7 +78,7 @@ namespace CYQ.Data.SQL
                     {
                         if (_action.Data.Columns.Contains(item) && (_action.Data[item].IsNullOrEmpty || _action.Data[item].State < 2))
                         {
-                            return item + "='" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "',";//如果存在更新列
+                            return SqlFormat.Keyword(item, _action.dalHelper.DataBaseType) + "='" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "',";//如果存在更新列
                         }
                     }
                 }
@@ -87,7 +87,7 @@ namespace CYQ.Data.SQL
         }
         internal string GetDeleteSql(object whereObj)
         {
-            return "delete from " + TableName + " where " + FormatWhere(whereObj);
+            return "delete from " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + " where " + FormatWhere(whereObj);
         }
         /// <summary>
         /// 返回插入的字符串
@@ -98,7 +98,7 @@ namespace CYQ.Data.SQL
             isCanDo = false;
             StringBuilder _TempSql = new StringBuilder();
             StringBuilder _TempSql2 = new StringBuilder();
-            _TempSql.Append("insert into " + TableName + "(");
+            _TempSql.Append("insert into " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + "(");
             _TempSql2.Append(") Values(");
             MDataCell primaryCell = _action.Data[_action.Data.Columns.FirstPrimary.ColumnName];
             int groupID = DataType.GetGroup(primaryCell.Struct.SqlType);
@@ -128,21 +128,28 @@ namespace CYQ.Data.SQL
                 if (cell.State > 0)
                 {
                     _TempSql.Append(SqlFormat.Keyword(cell.ColumnName, _action.DataBaseType) + ",");
-                    _TempSql2.Append(_action.dalHelper.Pre + cell.ColumnName + ",");
-                    object value = cell.Value;
-                    DbType dbType = DataType.GetDbType(cell.Struct.SqlType.ToString(), _action.DataBaseType);
-                    if (dbType == DbType.String && cell.StringValue == "")
+                    if (_action.DataBaseType == DataBaseType.MsSql && cell.Struct.SqlTypeName.EndsWith("hierarchyId"))
                     {
-                        if (_action.DataBaseType == DataBaseType.Oracle && !cell.Struct.IsCanNull)
-                        {
-                            value = " ";//Oracle not null 字段，不允许设置空值。
-                        }
-                        if (_action.DataBaseType == DataBaseType.MySql && cell.Struct.MaxSize == 36)
-                        {
-                            value = DBNull.Value;//MySql 的char36 会当成guid处理，不能为空，只能为null。
-                        }
+                        _TempSql2.Append("HierarchyID::Parse('" + cell.StringValue + "')");
                     }
-                    _action.dalHelper.AddParameters(_action.dalHelper.Pre + cell.ColumnName, value, dbType, cell.Struct.MaxSize, ParameterDirection.Input);
+                    else
+                    {
+                        _TempSql2.Append(_action.dalHelper.Pre + cell.ColumnName + ",");
+                        object value = cell.Value;
+                        DbType dbType = DataType.GetDbType(cell.Struct.SqlType.ToString(), _action.DataBaseType);
+                        if (dbType == DbType.String && cell.StringValue == "")
+                        {
+                            if (_action.DataBaseType == DataBaseType.Oracle && !cell.Struct.IsCanNull)
+                            {
+                                value = " ";//Oracle not null 字段，不允许设置空值。
+                            }
+                            if (_action.DataBaseType == DataBaseType.MySql && cell.Struct.MaxSize == 36)
+                            {
+                                value = DBNull.Value;//MySql 的char36 会当成guid处理，不能为空，只能为null。
+                            }
+                        }
+                        _action.dalHelper.AddParameters(_action.dalHelper.Pre + cell.ColumnName, value, dbType, cell.Struct.MaxSize, ParameterDirection.Input);
+                    }
                     isCanDo = true;
                 }
             }
@@ -166,13 +173,19 @@ namespace CYQ.Data.SQL
                         string key = Convert.ToString(primaryCell.Struct.DefaultValue);
                         if (!string.IsNullOrEmpty(key))
                         {
-                            key = key.Replace("nextval", "currval");
+                            key = key.Replace("nextval", "currval");//nextval('sequence_name'::regclass);||nextval('"sequence_name"'::regclass);
+                            string[] items = key.Split('\'');
+                            key = items[0] + "'" + SqlFormat.Keyword(items[1].Trim('\"'), DataBaseType.PostgreSQL) + "'" + items[2];
                             sql = sql + "; select " + key + " as OutPutValue";
+                        }
+                        else
+                        {
+                            sql = sql + " RETURNING " + SqlFormat.Keyword(primaryCell.ColumnName, DataBaseType.PostgreSQL);
                         }
                     }
                     else if (!primaryCell.IsNullOrEmpty)
                     {
-                        sql += string.Format("; select '{0}' as OutPutValue", primaryCell.Value);
+                        sql += string.Format("; select '{0}' as OutPutValue", SqlFormat.Keyword(primaryCell.StringValue, DataBaseType.PostgreSQL));
                     }
                     break;
                 case DataBaseType.MsSql:
@@ -182,7 +195,7 @@ namespace CYQ.Data.SQL
                     {
                         if (_action.dalHelper.DataBaseType == DataBaseType.Sybase)
                         {
-                            sql = sql + " select @@idENTITY as OutPutValue";
+                            sql = sql + " select @@IDENTITY as OutPutValue";
                         }
                         else if (_action.dalHelper.DataBaseType == DataBaseType.MsSql)
                         {
@@ -198,13 +211,13 @@ namespace CYQ.Data.SQL
                         sql = "set identity_insert " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + " on " + sql + " set identity_insert " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + " off";
                     }
                     break;
-                //if (!(Parent.AllowInsertID && !primaryCell.IsNull)) // 对于自行插入id的，跳过，主操作会自动返回id。
-                //{
-                //    sql += ((groupID == 1 && (primaryCell.IsNull || primaryCell.ToString() == "0")) ? " select cast(scope_identity() as int) as OutPutValue" : string.Format(" select '{0}' as OutPutValue", primaryCell.Value));
-                //}
-                //case DalType.Oracle:
-                //    sql += string.Format("BEGIN;select {0}.currval from dual; END;", Autoid);
-                //    break;
+                    //if (!(Parent.AllowInsertID && !primaryCell.IsNull)) // 对于自行插入id的，跳过，主操作会自动返回id。
+                    //{
+                    //    sql += ((groupID == 1 && (primaryCell.IsNull || primaryCell.ToString() == "0")) ? " select cast(scope_identity() as int) as OutPutValue" : string.Format(" select '{0}' as OutPutValue", primaryCell.Value));
+                    //}
+                    //case DalType.Oracle:
+                    //    sql += string.Format("BEGIN;select {0}.currval from dual; END;", Autoid);
+                    //    break;
             }
             return sql;
         }
@@ -216,7 +229,7 @@ namespace CYQ.Data.SQL
         {
             isCanDo = false;
             StringBuilder _TempSql = new StringBuilder();
-            _TempSql.Append("Update " + TableName + " set ");
+            _TempSql.Append("Update " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + " set ");
             if (!string.IsNullOrEmpty(updateExpression))
             {
                 _TempSql.Append(SqlCompatible.Format(updateExpression, _action.DataBaseType) + ",");
@@ -244,21 +257,28 @@ namespace CYQ.Data.SQL
                         //更新时间戳不允许更新。
                         continue;
                     }
-                    object value = cell.Value;
-                    DbType dbType = DataType.GetDbType(cell.Struct.SqlType.ToString(), _action.DataBaseType);
-                    if (dbType == DbType.String && cell.StringValue == "")
+                    if (_action.DataBaseType == DataBaseType.MsSql && cell.Struct.SqlTypeName.EndsWith("hierarchyId"))
                     {
-                        if (_action.DataBaseType == DataBaseType.Oracle && !cell.Struct.IsCanNull)
-                        {
-                            value = " ";//Oracle not null 字段，不允许设置空值。
-                        }
-                        if (_action.DataBaseType == DataBaseType.MySql && cell.Struct.MaxSize == 36)
-                        {
-                            value = DBNull.Value;//MySql 的char36 会当成guid处理，不能为空，只能为null。
-                        }
+                        _TempSql.Append(SqlFormat.Keyword(cell.ColumnName, _action.DataBaseType) + "=HierarchyID::Parse('" + cell.StringValue + "')" + ",");
                     }
-                    _action.dalHelper.AddParameters(_action.dalHelper.Pre + cell.ColumnName, value, dbType, cell.Struct.MaxSize, ParameterDirection.Input);
-                    _TempSql.Append(SqlFormat.Keyword(cell.ColumnName, _action.DataBaseType) + "=" + _action.dalHelper.Pre + cell.ColumnName + ",");
+                    else
+                    {
+                        object value = cell.Value;
+                        DbType dbType = DataType.GetDbType(cell.Struct.SqlType.ToString(), _action.DataBaseType);
+                        if (dbType == DbType.String && cell.StringValue == "")
+                        {
+                            if (_action.DataBaseType == DataBaseType.Oracle && !cell.Struct.IsCanNull)
+                            {
+                                value = " ";//Oracle not null 字段，不允许设置空值。
+                            }
+                            if (_action.DataBaseType == DataBaseType.MySql && cell.Struct.MaxSize == 36)
+                            {
+                                value = DBNull.Value;//MySql 的char36 会当成guid处理，不能为空，只能为null。
+                            }
+                        }
+                        _action.dalHelper.AddParameters(_action.dalHelper.Pre + cell.ColumnName, value, dbType, cell.Struct.MaxSize, ParameterDirection.Input);
+                        _TempSql.Append(SqlFormat.Keyword(cell.ColumnName, _action.DataBaseType) + "=" + _action.dalHelper.Pre + cell.ColumnName + ",");
+                    }
                     isCanDo = true;
                 }
             }
@@ -291,7 +311,7 @@ namespace CYQ.Data.SQL
                 where = RemoveOrderBy(where);
             }
 
-            return "select count(*) from " + TableName + where;
+            return "select count(*) from " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + where;
         }
         internal string GetExistsSql(object whereObj)
         {
@@ -312,13 +332,13 @@ namespace CYQ.Data.SQL
                 //return "set rowcount 1 select " + columnNames + " from " + TableName + " where " + FormatWhere(whereObj) + " set rowcount 0";
                 case DataBaseType.MsSql:
                 case DataBaseType.Access:
-                    return "select top 1 " + columnNames + " from " + TableName + " where " + FormatWhere(whereObj);
+                    return "select top 1 " + columnNames + " from " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + " where " + FormatWhere(whereObj);
                 case DataBaseType.Oracle:
-                    return "select " + columnNames + " from " + TableName + " where rownum=1 and " + FormatWhere(whereObj);
+                    return "select " + columnNames + " from " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + " where rownum=1 and " + FormatWhere(whereObj);
                 case DataBaseType.SQLite:
                 case DataBaseType.MySql:
                 case DataBaseType.PostgreSQL:
-                    return "select " + columnNames + " from " + TableName + " where " + FormatWhere(whereObj) + " limit 1";
+                    return "select " + columnNames + " from " + SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType) + " where " + FormatWhere(whereObj) + " limit 1";
             }
             return (string)Error.Throw(string.Format("GetTopOneSql:{0} No Be Support Now!", _action.dalHelper.DataBaseType.ToString()));
         }
@@ -328,10 +348,10 @@ namespace CYQ.Data.SQL
             {
                 whereObj = " where " + FormatWhere(whereObj);
             }
-            string t = Convert.ToString(text);
-            string v = Convert.ToString(value);
+            string t = SqlFormat.Keyword(Convert.ToString(text), _action.dalHelper.DataBaseType);
+            string v = SqlFormat.Keyword(Convert.ToString(value), _action.dalHelper.DataBaseType);
             string key = t != v ? (v + "," + t) : t;
-            return string.Format("select distinct {0} from {1} {2}", key, TableName, FormatWhere(whereObj));
+            return string.Format("select distinct {0} from {1} {2}", key, SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType), FormatWhere(whereObj));
         }
         internal string GetMaxID()
         {
@@ -345,14 +365,14 @@ namespace CYQ.Data.SQL
                     //case DalType.MySql:
                     //case DalType.SQLite:
                     //case DalType.Access:
-                    string columnName = _action.Data.Columns.FirstPrimary.ColumnName;
-                    string tableName = TableName;
-                    if (_action.dalHelper.DataBaseType == DataBaseType.PostgreSQL)
-                    {
-                        columnName = SqlFormat.Keyword(columnName, DataBaseType.PostgreSQL);
-                        tableName = SqlFormat.Keyword(tableName, DataBaseType.PostgreSQL);
-                    }
-                    return string.Format("select max({0}) from {1}", columnName, tableName);
+                    //string columnName = _action.Data.Columns.FirstPrimary.ColumnName;
+                    //string tableName = TableName;
+                    ////if (_action.dalHelper.DataBaseType == DataBaseType.PostgreSQL)
+                    ////{
+                    //columnName = SqlFormat.Keyword(columnName, _action.dalHelper.DataBaseType);
+                    //tableName = SqlFormat.Keyword(tableName, _action.dalHelper.DataBaseType);
+                    // }
+                    return string.Format("select max({0}) from {1}", SqlFormat.Keyword(_action.Data.Columns.FirstPrimary.ColumnName, _action.dalHelper.DataBaseType), SqlFormat.Keyword(TableName, _action.dalHelper.DataBaseType));
 
             }
             // return (string)Error.Throw(string.Format("GetMaxid:{0} No Be Support Now!", _action.dalHelper.dalType.ToString()));
@@ -385,7 +405,7 @@ namespace CYQ.Data.SQL
                 }
                 whereOnly = SqlFormat.RemoveWhereOneEqualsOne(whereOnly);
             }
-            string sql = "(select " + GetColumnsSql() + " from " + TableName + " " + whereOnly + ") v";
+            string sql = "(select " + GetColumnsSql() + " from " + SqlFormat.Keyword(TableName, _action.DataBaseType) + " " + whereOnly + ") v";
             //if (_action.DalType != DalType.Oracle) // Oracle 取消了存储过程。
             //{
             //    sql += "v";
@@ -447,7 +467,7 @@ namespace CYQ.Data.SQL
                 {
                     where = "1=1";
                 }
-                where = AddOrderBy(where, primaryKey);
+                where = AddOrderBy(where, primaryKey, _action.DataBaseType);
             }
             return where;
         }
@@ -515,7 +535,12 @@ namespace CYQ.Data.SQL
                         }
                         break;
                     default:
-                        where = cell.ColumnName + "=" + _action.dalHelper.Pre + cell.ColumnName;
+                        string cName = cell.ColumnName;
+                        if (cell.Struct.MDataColumn != null)
+                        {
+                            cName = SqlFormat.Keyword(cell.ColumnName, cell.Struct.MDataColumn.DataBaseType);
+                        }
+                        where = cName + "=" + _action.dalHelper.Pre + cell.ColumnName;
                         _action.dalHelper.AddParameters(cell.ColumnName, cell.Value, DataType.GetDbType(cell.Struct.ValueType), cell.Struct.MaxSize, ParameterDirection.Input);
                         break;
                 }
@@ -664,6 +689,7 @@ namespace CYQ.Data.SQL
             {
                 where = where.Trim('\'');
             }
+            columnName = SqlFormat.Keyword(columnName, dalType);
             if (groupID == 1)//int 类型的，主键不为bit型。
             {
                 where = columnName + "=" + where;
@@ -700,11 +726,11 @@ namespace CYQ.Data.SQL
         }
 
 
-        internal static string AddOrderBy(string where, string primaryKey)
+        internal static string AddOrderBy(string where, string primaryKey, DataBaseType dalType)
         {
             if (where.IndexOf("order by", StringComparison.OrdinalIgnoreCase) == -1)
             {
-                where += " order by " + primaryKey + " asc";
+                where += " order by " + SqlFormat.Keyword(primaryKey, dalType) + " asc";
             }
             else if (where.IndexOf(" asc", StringComparison.OrdinalIgnoreCase) == -1 && where.IndexOf(" desc", StringComparison.OrdinalIgnoreCase) == -1)
             {
@@ -775,9 +801,13 @@ namespace CYQ.Data.SQL
                                 where += columnName + "=to_date('" + cell.StringValue + "','yyyy-mm-dd hh24:mi:ss')";
                             }
                         }
+                        else if (groupID == 0 && dalType == DataBaseType.MsSql && cell.Struct.SqlTypeName.EndsWith("hierarchyId"))
+                        {
+                            where += columnName + "=HierarchyID::Parse('" + cell.StringValue + "')";
+                        }
                         else
                         {
-
+                            //处理HID=HierarchyID::Parse('/1/2/3/')
                             where += columnName + "='" + cell.Value + "'";
                         }
                         break;
@@ -801,7 +831,8 @@ namespace CYQ.Data.SQL
             for (int i = 0; i < items.Count; i++)
             {
                 item = items[i];
-                if (string.IsNullOrEmpty(item)) {
+                if (string.IsNullOrEmpty(item))
+                {
                     continue;
                 }
                 if (groupID != 0)
@@ -848,7 +879,7 @@ namespace CYQ.Data.SQL
 
         internal static string MySqlBulkCopySql = "LOAD DATA LOCAL INFILE '{0}' INTO TABLE {1} CHARACTER SET utf8 FIELDS TERMINATED BY '{2}' LINES TERMINATED BY '|\r\n|' {3}";
         internal static string OracleBulkCopySql = "LOAD DATA INFILE '{0}' APPEND INTO TABLE {1} FIELDS TERMINATED BY '{2}' OPTIONALLY ENCLOSED BY '\"' {3}";
-        internal static string OracleSqlidR = " userid={0} control='{1}'";//sqlldr   
+        internal static string OracleSqlldr = " userid={0} control='{1}'";//sqlldr   
         internal static string TruncateTable = "truncate table {0}";
         /// <summary>
         /// 获得批量导入的列名。

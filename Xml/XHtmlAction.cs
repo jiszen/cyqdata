@@ -672,16 +672,18 @@ namespace CYQ.Data.Xml
                             string lowerValue = values[0].ToLower();
                             foreach (XmlNode option in node.ChildNodes)
                             {
+                                string opValue = option.InnerText.ToLower();
                                 if (option.Attributes["value"] != null)
                                 {
-                                    string opValue = option.Attributes["value"].Value.Split(',')[0].ToLower();
-                                    if (opValue == lowerValue || opValue == (lowerValue == "true" ? "1" : (lowerValue == "false" ? "0" : lowerValue)))
-                                    {
-                                        SetAttrValue(option, "selected", "selected");
-                                        break;
-                                    }
-                                   
+                                    opValue = option.Attributes["value"].Value.Split(',')[0].ToLower();
                                 }
+                                if (opValue == lowerValue || opValue == (lowerValue == "true" ? "1" : (lowerValue == "false" ? "0" : lowerValue)))
+                                {
+                                    SetAttrValue(option, "selected", "selected");
+                                    break;
+                                }
+
+
                             }
                         }
                         break;
@@ -838,70 +840,92 @@ namespace CYQ.Data.Xml
         private string ReplaceCustomFlag(string html, MDictionary<string, string> values, MDataRow row)
         {
             #region 替换自定义标签
-            MatchCollection matchs = Regex.Matches(html, @"\$\{([\S\s]*?)\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-            if (matchs != null && matchs.Count > 0)
+            if (html.IndexOf("${") > -1)
             {
-                List<string> keys = new List<string>(matchs.Count);
-                foreach (Match match in matchs)
+                MatchCollection matchs = Regex.Matches(html, @"\$\{([\S\s]*?)\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+                if (matchs != null && matchs.Count > 0)
                 {
-                    //原始的占位符
-                    string value = match.Groups[0].Value;//${txt#name:xx#xx}，${'aaa'+txt#name:xx#xx+'bbb'}
-                    if (keys.Contains(value))
+                    List<string> keys = new List<string>(matchs.Count);
+                    foreach (Match match in matchs)
                     {
-                        continue;
-                    }
-                    keys.Add(value);
-                    #region 分解占位符
+                        //原始的占位符
+                        string value = match.Groups[0].Value;//${txt#name:xx#xx}，${'aaa'+txt#name:xx#xx+'bbb'}
+                        if (keys.Contains(value))
+                        {
+                            continue;
+                        }
+                        keys.Add(value);
+                        #region 分解占位符
 
-                    //先处理+号 ${'aaa'+txt#name:xx#xx+'bbb'}
-                    string formatter = "", key = "";
-                    foreach (string item in match.Groups[1].Value.Trim().Split('+'))
-                    {
-                        if (item[0] == '"')
+                        //先处理+号 ${'aaa'+txt#name:xx#xx+'bbb'}
+                        string formatter = "", key = "";
+                        foreach (string item in match.Groups[1].Value.Trim().Split('+'))
                         {
-                            formatter += item.Trim('"');
-                        }
-                        else if (item[0] == '\'')
-                        {
-                            formatter += item.Trim('\'');
-                        }
-                        else
-                        {
-                            if (!string.IsNullOrEmpty(key))
+                            if (item[0] == '"')
                             {
-                                break;//只允许存在一个key : txt#name:这是描述说明。
+                                formatter += item.Trim('"');
                             }
-                            formatter += "{0}";
-                            key = item.Trim();
+                            else if (item[0] == '\'')
+                            {
+                                formatter += item.Trim('\'');
+                            }
+                            else
+                            {
+                                if (!string.IsNullOrEmpty(key))
+                                {
+                                    break;//只允许存在一个key : txt#name:这是描述说明。
+                                }
+                                formatter += "{0}";
+                                key = item.Trim();
+                            }
                         }
-                    }
-                    string columnName = key.Split(':')[0];//name
-                    #endregion
-                    string replaceValue = "";
+                        string columnName = key.Split(':')[0];//name
+                        #endregion
+                        string replaceValue = "";
 
-                    #region 获取占位符的值
-                    if (value != null && row != null)
-                    {
-                        replaceValue = GetValueByTable(columnName, key, values, row);
-                    }
-                    if (string.IsNullOrEmpty(replaceValue))
-                    {
-                        replaceValue = GetValueByKeyValue(columnName);
-                    }
-                    if (string.IsNullOrEmpty(replaceValue))
-                    {
-                        replaceValue = GetValueByRequest(columnName, key);
-                    }
-                    #endregion
+                        #region 获取占位符的值
+                        if (value != null && row != null)
+                        {
+                            replaceValue = GetValueByTable(columnName, key, values, row);
+                        }
+                        if (string.IsNullOrEmpty(replaceValue))
+                        {
+                            replaceValue = GetValueByKeyValue(columnName);
+                        }
+                        if (string.IsNullOrEmpty(replaceValue))
+                        {
+                            replaceValue = GetValueByRequest(columnName, key);
+                        }
+                        #endregion
 
-                    html = html.Replace(value, string.IsNullOrEmpty(replaceValue) ? "" : string.Format(formatter, replaceValue));
+                        html = html.Replace(value, string.IsNullOrEmpty(replaceValue) ? "" : string.Format(formatter, replaceValue));
 
+                    }
+                    keys.Clear();
+                    keys = null;
+                    matchs = null;
                 }
-                keys.Clear();
-                keys = null;
-                matchs = null;
             }
-
+            if (html.IndexOf("<%#") > -1)//js eval 执行
+            {
+                MatchCollection matchs = Regex.Matches(html, @"<%#([\S\s]*?)%>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+                if (matchs != null && matchs.Count > 0)
+                {
+                    foreach (Match match in matchs)
+                    {
+                        //原始的占位符
+                        string value = match.Groups[0].Value;//${txt#name:xx#xx}，${'aaa'+txt#name:xx#xx+'bbb'}
+                        string value1 = match.Groups[1].Value;
+                        string evalValue = null;
+                        try
+                        {
+                            evalValue = Convert.ToString(Microsoft.JScript.Eval.JScriptEvaluate(value1, Microsoft.JScript.Vsa.VsaEngine.CreateEngine()));
+                        }
+                        catch { }
+                        html = html.Replace(value, evalValue);
+                    }
+                }
+            }
             #endregion
             return html;
         }
@@ -1048,7 +1072,18 @@ namespace CYQ.Data.Xml
             try
             {
                 #region 基本判断
-                if (node == null || _Table == null || _Table.Rows.Count == 0) { return; }
+                if (node == null)
+                {
+                    return;
+                }
+                if (_Table == null || _Table.Rows.Count == 0)
+                {
+                    if (node.Attributes["clearflag"] == null)
+                    {
+                        node.InnerXml = "";
+                    }
+                    return;
+                }
                 RemoveAttr(node, "clearflag");
                 #endregion
 
@@ -1253,7 +1288,7 @@ namespace CYQ.Data.Xml
         /// <param name="pre">为所有字段名指定前缀（如："a.",或空前缀：""）</param>
         public void LoadData(MDataRow row, string pre)
         {
-            if (pre != null)
+            if (pre != null && row != null)
             {
                 foreach (MDataCell cell in row)
                 {

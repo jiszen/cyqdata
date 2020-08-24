@@ -9,7 +9,7 @@ using CYQ.Data.SQL;
 using System.IO;
 using System.Reflection;
 using CYQ.Data.Xml;
-
+using System.Linq;
 
 namespace CYQ.Data.Tool
 {
@@ -509,7 +509,36 @@ namespace CYQ.Data.Tool
         }
         public static string OutResult(bool result, object msgObj)
         {
-            return OutResult(result, ToJson(msgObj), true);
+            return OutResult(result, msgObj, null, null);
+        }
+        public static string OutResult(bool result, object msgObj, string name, object value, params object[] nameValues)
+        {
+
+            //JsonHelper js = new JsonHelper(false, false);
+            //js.Add("success", result.ToString().ToLower(), true);
+            //if (msgObj is string)
+            //{
+            //    js.Add("msg", Convert.ToString(msgObj));
+            //}
+            //else
+            //{
+            //    js.Add("msg", ToJson(msgObj), true);
+            //}
+            int num = name == null ? 2 : 4;
+            object[] nvs = new object[nameValues.Length + num];
+            nvs[0] = "msg";
+            nvs[1] = msgObj;
+            if (num == 4)
+            {
+                nvs[2] = name;
+                nvs[3] = value;
+            }
+            if (nameValues.Length > 0)
+            {
+                nameValues.CopyTo(nvs, num);
+            }
+            return OutResult("success", result, nvs);
+
         }
         public static string OutResult(string name, object value, params object[] nameValues)
         {
@@ -1128,6 +1157,7 @@ namespace CYQ.Data.Tool
                     #region 加载数据
                     if (result.Count == 1)
                     {
+                        #region 自定义输出头判断
                         Dictionary<string, string> dic = result[0];
                         if (dic.ContainsKey("total") && dic.ContainsKey("rows"))
                         {
@@ -1147,6 +1177,7 @@ namespace CYQ.Data.Tool
                             }
                             result = SplitArray(dic["Columns"]);
                         }
+                        #endregion
                     }
                     if (result != null && result.Count > 0)
                     {
@@ -1192,25 +1223,41 @@ namespace CYQ.Data.Tool
                                 #endregion
                             }
 
-                            MDataRow row = table.NewRow(true);
-                            MDataCell cell = null;
-                            foreach (KeyValuePair<string, string> item in keyValueDic)
+
+                            bool isKeyValue = table.Columns.Count == 2 && table.Columns[1].ColumnName == "Value" && (table.Columns[0].ColumnName == "Key" || table.Columns[0].ColumnName == "Name");
+
+                            if (isKeyValue)
                             {
-                                cell = row[item.Key];
-                                if (cell == null && mdc == null)
+                                foreach (KeyValuePair<string, string> item in keyValueDic)
                                 {
-                                    table.Columns.Add(item.Key, SqlDbType.NVarChar);
-                                    cell = row[item.Key];
-                                }
-                                if (cell != null)
-                                {
-                                    string val = UnEscape(item.Value, op);
-
-
-                                    cell.Value = val;
-                                    cell.State = 1;
+                                    MDataRow row = table.NewRow(true);
+                                    row.Set(0, item.Key);
+                                    row.Set(1, item.Value);
                                 }
                             }
+                            else
+                            {
+                                MDataRow row = table.NewRow(true);
+                                MDataCell cell = null;
+                                foreach (KeyValuePair<string, string> item in keyValueDic)
+                                {
+
+                                    cell = row[item.Key];
+                                    if (cell == null && mdc == null)
+                                    {
+                                        table.Columns.Add(item.Key, SqlDbType.NVarChar);
+                                        cell = row[item.Key];
+                                    }
+                                    if (cell != null)
+                                    {
+                                        string val = UnEscape(item.Value, op);
+                                        cell.Value = val;
+                                        cell.State = 1;
+                                    }
+
+                                }
+                            }
+
                         }
                     }
                     #endregion
@@ -1295,7 +1342,7 @@ namespace CYQ.Data.Tool
                         {
                             foreach (KeyValuePair<string, string> kv in dic)
                             {
-                                mi.Invoke(objT, new object[] { kv.Key, UnEscape(kv.Value, op) });
+                                mi.Invoke(objT, new object[] { Convert.ChangeType(kv.Key, ts[0]), Convert.ChangeType(UnEscape(kv.Value, op), ts[1]) });
                             }
                         }
                     }

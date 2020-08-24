@@ -68,6 +68,20 @@ namespace CYQ.Data
                     int i = _con.DataSource.LastIndexOf('=') + 1;
                     return _con.DataSource.Substring(i).Trim(' ', ')');
                 }
+                else if (DataBaseType == DataBaseType.DB2)
+                {
+                    string conn = _con.ConnectionString;
+                    int i = conn.IndexOf("database=", StringComparison.OrdinalIgnoreCase);
+                    int end = conn.IndexOf(';', i);
+                    if (end == -1)
+                    {
+                        return conn.Substring(i + 9);
+                    }
+                    else
+                    {
+                        return conn.Substring(i + 9, end - i - 9);
+                    }
+                }
                 else
                 {
                     return System.IO.Path.GetFileNameWithoutExtension(_con.DataSource);
@@ -258,8 +272,27 @@ namespace CYQ.Data
             {
                 return null;
             }
-            Dictionary<string, string> dic = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, string> dic = null;
+            string key = "UVPCache_" + StaticTool.GetHashKey(sql + ConnName);
+            #region 缓存检测
+            if (!string.IsNullOrEmpty(AppConfig.DB.SchemaMapPath))
+            {
+                string fullPath = AppConfig.RunPath + AppConfig.DB.SchemaMapPath + key + ".json";
+                if (System.IO.File.Exists(fullPath))
+                {
+                    string json = IOHelper.ReadAllText(fullPath);
+                    dic = JsonHelper.ToEntity<Dictionary<string, string>>(json);
+                    if (dic != null && dic.Count > 0)
+                    {
+                        return dic;
+                    }
+                }
+            }
+            #endregion
+            dic = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            IsRecordDebugInfo = false || AppDebug.IsContainSysSql;
             DbDataReader sdr = ExeDataReader(sql, false);
+            IsRecordDebugInfo = true;
             if (sdr != null)
             {
                 string tableName = string.Empty;
@@ -274,6 +307,18 @@ namespace CYQ.Data
                 sdr.Close();
                 sdr = null;
             }
+            #region 缓存设置
+            if (!string.IsNullOrEmpty(AppConfig.DB.SchemaMapPath) && dic != null && dic.Count > 0)
+            {
+                string folderPath = AppConfig.RunPath + AppConfig.DB.SchemaMapPath;
+                if (!System.IO.Directory.Exists(folderPath))
+                {
+                    System.IO.Directory.CreateDirectory(folderPath);
+                }
+                string json = JsonHelper.ToJson(dic);
+                IOHelper.Write(folderPath + key + ".json", json);
+            }
+            #endregion
             return dic;
         }
 
@@ -522,7 +567,7 @@ namespace CYQ.Data
                     para.Size = -1;
                 }
             }
-            else if (dbType != DbType.Binary && size > -1)
+            else if (dbType != DbType.Binary && size > 0)
             {
                 if (size != para.Size)
                 {
@@ -605,7 +650,7 @@ namespace CYQ.Data
             //上面if代码被注释了，下面代码忘了加!isProc判断，现补上。 取消多余的参数，新加的小贴心，过滤掉用户不小心写多的参数。
             if (!isProc && _com != null && _com.Parameters != null && _com.Parameters.Count > 0)
             {
-                bool needToReplace = (DataBaseType == DataBaseType.Oracle || DataBaseType == DataBaseType.MySql) && _com.CommandText.Contains("@");
+                bool needToReplace = (DataBaseType == DataBaseType.Oracle || DataBaseType == DataBaseType.MySql || DataBaseType == Data.DataBaseType.PostgreSQL) && _com.CommandText.Contains("@");
                 string paraName;
                 for (int i = 0; i < _com.Parameters.Count; i++)
                 {
@@ -617,6 +662,7 @@ namespace CYQ.Data
                         {
                             case DataBaseType.Oracle:
                             case DataBaseType.MySql:
+                            case Data.DataBaseType.PostgreSQL:
                                 _com.CommandText = _com.CommandText.Replace("@" + paraName, Pre + paraName);
                                 break;
                         }

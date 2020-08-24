@@ -83,14 +83,15 @@ namespace CYQ.Data.Table
         public object DefaultValue
         {
             get { return _DefaultValue; }
-            set { 
-                int groupID=DataType.GetGroup(SqlType);
+            set
+            {
+                int groupID = DataType.GetGroup(SqlType);
                 if (groupID == 1 || groupID == 3)
                 {
                     string defaultValue = Convert.ToString(value);
-                    if (!string.IsNullOrEmpty(defaultValue) && (defaultValue[0] == 'N' || defaultValue[0]=='('))
+                    if (!string.IsNullOrEmpty(defaultValue) && (defaultValue[0] == 'N' || defaultValue[0] == '('))
                     {
-                        defaultValue = defaultValue.Trim('N','(', ')');//处理int型默认值（1）带括号的问题。
+                        defaultValue = defaultValue.Trim('N', '(', ')');//处理int型默认值（1）带括号的问题。
                     }
                     _DefaultValue = defaultValue;
                 }
@@ -100,7 +101,7 @@ namespace CYQ.Data.Table
                 }
             }
         }
-    
+
         /// <summary>
         /// 是否允许为Null
         /// </summary>
@@ -132,10 +133,25 @@ namespace CYQ.Data.Table
                 }
             }
         }
+        private string _TableName;
         /// <summary>
         /// 表名
         /// </summary>
-        public string TableName;
+        public string TableName
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(_TableName) && _MDataColumn != null)
+                {
+                    return _MDataColumn.TableName;
+                }
+                return _TableName;
+            }
+            set { _TableName = value; }
+
+        }
+
+
         private SqlDbType _SqlType;
         /// <summary>
         /// SqlDbType类型
@@ -149,7 +165,7 @@ namespace CYQ.Data.Table
             set
             {
                 _SqlType = value;
-                ValueType = DataType.GetType(_SqlType, DalType);
+                //ValueType = DataType.GetType(_SqlType, DalType,SqlTypeName);
             }
         }
         /// <summary>
@@ -165,7 +181,19 @@ namespace CYQ.Data.Table
         /// 原始的数据库字段类型名称
         /// </summary>
         internal string SqlTypeName;
-        internal Type ValueType;
+        [NonSerialized]
+        internal Type valueType;
+        internal Type ValueType
+        {
+            get
+            {
+                if (valueType == null)
+                {
+                    valueType = DataType.GetType(_SqlType, DalType, SqlTypeName);
+                }
+                return valueType;
+            }
+        }
         private DataBaseType dalType = DataBaseType.None;
         internal DataBaseType DalType
         {
@@ -187,8 +215,23 @@ namespace CYQ.Data.Table
             get { return _AlterOp; }
             set { _AlterOp = value; }
         }
+        internal int _ReaderIndex = -1;
         //内部使用的索引，在字段名为空时使用
-        internal int ReaderIndex = -1;
+        internal int ReaderIndex
+        {
+            get
+            {
+                if (_ReaderIndex == -1 && _MDataColumn!=null)
+                {
+                    return _MDataColumn.GetIndex(this.ColumnName);
+                }
+                return _ReaderIndex;
+            }
+            set
+            {
+                _ReaderIndex = value;
+            }
+        }
         /// <summary>
         /// 是否忽略Json转换
         /// </summary>
@@ -219,6 +262,7 @@ namespace CYQ.Data.Table
         internal void Load(MCellStruct ms)
         {
             ColumnName = ms.ColumnName;
+            SqlTypeName = ms.SqlTypeName;
             SqlType = ms.SqlType;
             IsAutoIncrement = ms.IsAutoIncrement;
             IsCanNull = ms.IsCanNull;
@@ -228,7 +272,6 @@ namespace CYQ.Data.Table
             IsUniqueKey = ms.IsUniqueKey;
             IsForeignKey = ms.IsForeignKey;
             FKTableName = ms.FKTableName;
-            SqlTypeName = ms.SqlTypeName;
             AlterOp = ms.AlterOp;
             IsJsonIgnore = ms.IsJsonIgnore;
             if (ms.DefaultValue != null)
@@ -248,6 +291,7 @@ namespace CYQ.Data.Table
         {
             MCellStruct ms = new MCellStruct(dalType);
             ms.ColumnName = ColumnName;
+            ms.SqlTypeName = SqlTypeName;
             ms.SqlType = SqlType;
             ms.IsAutoIncrement = IsAutoIncrement;
             ms.IsCanNull = IsCanNull;
@@ -257,7 +301,6 @@ namespace CYQ.Data.Table
             ms.IsUniqueKey = IsUniqueKey;
             ms.IsForeignKey = IsForeignKey;
             ms.FKTableName = FKTableName;
-            ms.SqlTypeName = SqlTypeName;
             ms.DefaultValue = DefaultValue;
             ms.Description = Description;
             ms.MDataColumn = MDataColumn;
